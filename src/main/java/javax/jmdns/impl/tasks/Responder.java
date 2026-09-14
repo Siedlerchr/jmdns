@@ -15,9 +15,15 @@ package javax.jmdns.impl.tasks;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.Timer;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +34,7 @@ import javax.jmdns.impl.DNSQuestion;
 import javax.jmdns.impl.DNSRecord;
 import javax.jmdns.impl.JmDNSImpl;
 import javax.jmdns.impl.constants.DNSConstants;
+import javax.jmdns.impl.constants.DNSRecordType;
 
 /**
  * The Responder sends a single answer for the specified service infos and for the host name.
@@ -132,26 +139,64 @@ public class Responder extends DNSTask {
                 if (!answers.isEmpty()) {
                     logger.debug("{}.run() JmDNS responding", this.getName());
 
-                    DNSOutgoing out = new DNSOutgoing(DNSConstants.FLAGS_QR_RESPONSE | DNSConstants.FLAGS_AA, !unicast, dnsIncoming.getSenderUDPPayload());
-                    out.setDestination(new InetSocketAddress(inetAddress, port));
-                    out.setId(dnsIncoming.getId());
-                    for (DNSQuestion question : questions) {
-                        if (question != null) {
-                            out = this.addQuestion(out, question);
+                    for (Set<DNSRecord> responseGroup : createResponseGroups(answers)) {
+                        DNSOutgoing out = new DNSOutgoing(DNSConstants.FLAGS_QR_RESPONSE | DNSConstants.FLAGS_AA, !unicast, dnsIncoming.getSenderUDPPayload());
+                        out.setDestination(new InetSocketAddress(inetAddress, port));
+                        out.setId(dnsIncoming.getId());
+                        for (DNSQuestion question : questions) {
+                            if (question != null) {
+                                out = this.addQuestion(out, question);
+                            }
                         }
-                    }
-                    for (DNSRecord answer : answers) {
-                        if (answer != null) {
-                            out = this.addAnswer(out, dnsIncoming, answer);
+                        for (DNSRecord answer : responseGroup) {
+                            if (answer != null) {
+                                out = this.addAnswer(out, dnsIncoming, answer);
 
+                            }
                         }
+                        if (!out.isEmpty()) this.getDns().send(out);
                     }
-                    if (!out.isEmpty()) this.getDns().send(out);
                 }
             } catch (Throwable e) {
                 logger.warn("{}.run() exception ", this.getName(), e);
                 this.getDns().close();
             }
         }
+    }
+
+    static List<Set<DNSRecord>> createResponseGroups(Set<DNSRecord> answers) {
+        long serviceCount = answers.stream()
+                .filter(record -> record instanceof DNSRecord.Pointer)
+                .map(record -> ((DNSRecord.Pointer) record).getAlias())
+                .distinct()
+                .count();
+        if (serviceCount <= 1) {
+            List<Set<DNSRecord>> responseGroups = new ArrayList<>();
+            responseGroups.add(new LinkedHashSet<>(answers));
+            return responseGroups;
+        }
+
+        List<Map.Entry<String, List<DNSRecord>>> recordsByName = new ArrayList<>(answers.stream()
+                .collect(Collectors.groupingBy(DNSRecord::getName))
+                .entrySet());
+        recordsByName.sort(Comparator.comparingInt((Map.Entry<String, List<DNSRecord>> entry) -> entry.getValue().size()).reversed());
+
+        List<Set<DNSRecord>> responseGroups = new ArrayList<>();
+        for (Map.Entry<String, List<DNSRecord>> entry : recordsByName) {
+            Set<DNSRecord> responseGroup = answers.stream()
+                    .filter(record -> isAddressRecord(record) || pointsTo(record, entry.getKey()))
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            responseGroup.addAll(entry.getValue());
+            responseGroups.add(responseGroup);
+        }
+        return responseGroups;
+    }
+
+    private static boolean isAddressRecord(DNSRecord record) {
+        return record.getRecordType() == DNSRecordType.TYPE_A || record.getRecordType() == DNSRecordType.TYPE_AAAA;
+    }
+
+    private static boolean pointsTo(DNSRecord record, String name) {
+        return record instanceof DNSRecord.Pointer && name.equals(((DNSRecord.Pointer) record).getAlias());
     }
 }
