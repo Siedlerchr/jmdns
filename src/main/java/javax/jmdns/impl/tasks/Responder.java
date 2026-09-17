@@ -183,6 +183,9 @@ public class Responder extends DNSTask {
 
         List<Set<DNSRecord>> responseGroups = new ArrayList<>();
         for (Map.Entry<String, List<DNSRecord>> entry : recordsByName) {
+            if (entry.getValue().stream().allMatch(Responder::isAddressRecord)) {
+                continue;
+            }
             Set<DNSRecord> responseGroup = answers.stream()
                     .filter(record -> isAddressRecord(record) || pointsTo(record, entry.getKey()))
                     .collect(Collectors.toCollection(LinkedHashSet::new));
