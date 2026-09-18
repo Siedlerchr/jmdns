@@ -31,24 +31,37 @@ import org.junit.jupiter.api.Test;
 class ResponderTest {
 
     private static final String SERVICE_TYPE = "_printer._tcp.local.";
+    private static final String SUBTYPE = "_universal._sub." + SERVICE_TYPE;
     private static final String HOST_NAME = "printer.local.";
 
     @Test
     void groupsEveryServiceInALargeResponseWithItsRelatedRecords() {
+        assertPrinterAnnouncementsAreGrouped(20);
+    }
+
+    @Test
+    void groupsTenPrinterAnnouncements() {
+        assertPrinterAnnouncementsAreGrouped(10);
+    }
+
+    private void assertPrinterAnnouncementsAreGrouped(int printerCount) {
         Set<DNSRecord> answers = new HashSet<>();
         Map<DNSRecord, Set<DNSRecord>> expectedGroups = new HashMap<>();
 
-        for (int serviceNumber = 0; serviceNumber < 20; serviceNumber++) {
+        for (int serviceNumber = 0; serviceNumber < printerCount; serviceNumber++) {
             String serviceName = "printer-" + serviceNumber + "." + SERVICE_TYPE;
             DNSRecord.Pointer pointer = new DNSRecord.Pointer(SERVICE_TYPE, DNSRecordClass.CLASS_IN, false, DNSConstants.DNS_TTL, serviceName);
+            DNSRecord.Pointer subtypePointer = new DNSRecord.Pointer(SUBTYPE, DNSRecordClass.CLASS_IN, false, DNSConstants.DNS_TTL, serviceName);
             DNSRecord.Service service = new DNSRecord.Service(serviceName, DNSRecordClass.CLASS_IN, true, DNSConstants.DNS_TTL, 0, 0, 515, HOST_NAME);
             DNSRecord.Text text = new DNSRecord.Text(serviceName, DNSRecordClass.CLASS_IN, true, DNSConstants.DNS_TTL, new byte[0]);
             answers.add(pointer);
+            answers.add(subtypePointer);
             answers.add(service);
             answers.add(text);
 
             Set<DNSRecord> expectedGroup = new HashSet<>();
             expectedGroup.add(pointer);
+            expectedGroup.add(subtypePointer);
             expectedGroup.add(service);
             expectedGroup.add(text);
             expectedGroups.put(service, expectedGroup);
@@ -56,7 +69,7 @@ class ResponderTest {
 
         List<Set<DNSRecord>> responseGroups = Responder.createResponseGroups(answers);
 
-        assertEquals(21, responseGroups.size());
+        assertEquals(printerCount, responseGroups.size());
         for (Map.Entry<DNSRecord, Set<DNSRecord>> expectedGroup : expectedGroups.entrySet()) {
             List<Set<DNSRecord>> groupsForService = new ArrayList<>();
             for (Set<DNSRecord> responseGroup : responseGroups) {
